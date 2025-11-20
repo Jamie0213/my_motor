@@ -27,6 +27,7 @@ setup(
             'go = my_motor.go:main',
             'joystick = my_motor.joystick:main',
             'command_mux = my_motor.command_mux:main',
+            'straight = my_motor.straight:main',
         ],
     },
 )
