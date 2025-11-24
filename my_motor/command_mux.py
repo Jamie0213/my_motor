@@ -15,6 +15,9 @@ def _copy_array(msg: Float32MultiArray) -> Float32MultiArray:
     copied.data = list(msg.data)
     return copied
 
+ESTOP = 2
+MANUAL_MODE = 1
+AD_MODE = 0
 
 class AckermannCommandMux(Node):
     def __init__(self, args: argparse.Namespace):
@@ -28,6 +31,8 @@ class AckermannCommandMux(Node):
         self.joystick_sub = self.create_subscription(
             Float32MultiArray, args.joystick_topic, self._on_joystick, 10
         )
+
+        self.mode = MANUAL_MODE
 
         period = 1.0 / max(1.0, float(args.pub_hz))
         self.timer = self.create_timer(period, self._on_timer)
@@ -73,8 +78,8 @@ class AckermannCommandMux(Node):
             return False
         if len(self.last_joy_msg.data) == 0:
             return False
-        for value in self.last_joy_msg.data:
-            if abs(value) > self.joystick_deadband:
+        for value in self.last_joy_msg.data[:2]:
+            if abs(value) > self.joystick_deadband or self.mode == MANUAL_MODE:
                 return True
         return False
 
@@ -90,6 +95,8 @@ class AckermannCommandMux(Node):
             and (now - self.last_udp_time) <= self.args.udp_timeout
         )
 
+        self.get_logger().info(f'joy : {joy_fresh} udp : {udp_fresh}')
+
         if joy_fresh and self._is_joystick_active():
             print("joystick_fresh")
             return "joystick", _copy_array(self.last_joy_msg)
@@ -101,18 +108,50 @@ class AckermannCommandMux(Node):
 
     def _on_timer(self):
         now = self._now()
-        source, msg = self._select_command(now)
 
-        if source != self.last_source:
-            if source == "joystick":
-                self.get_logger().info("[MUX] Using joystick command (priority).")
-            elif source == "udp":
-                self.get_logger().info("[MUX] Using UDP command.")
-            else:
-                self.get_logger().warn("[MUX] No fresh command → stop (0,0).")
-            self.last_source = source
+        joy_fresh = (
+            self.last_joy_msg is not None
+            and self.last_joy_time is not None
+            and (now - self.last_joy_time) <= self.args.joystick_timeout
+        )
+        
+        udp_fresh = (
+            self.last_udp_msg is not None
+            and self.last_udp_time is not None
+            and (now - self.last_udp_time) <= self.args.udp_timeout
+        )
 
-        self.publisher.publish(msg)
+        self.get_logger().info(f'joy : {joy_fresh} udp : {udp_fresh}')
+
+        pub_msg = Float32MultiArray()
+
+        if joy_fresh:
+            self.mode = int(self.last_joy_msg.data[2])
+
+        if udp_fresh and self.mode == AD_MODE:
+            pub_msg.data = self.last_udp_msg.data[:2]
+            self.publisher.publish(pub_msg)
+
+        elif joy_fresh and self.mode == MANUAL_MODE:
+            pub_msg.data = self.last_joy_msg.data[:2]
+            self.publisher.publish(pub_msg)
+
+        else:
+            pub_msg.data = [0., 0.]
+            self.publisher.publish(pub_msg)
+
+        mode = ["AD_MODE", "MANUAL_MODE", "ESTOP"][self.mode]
+
+        self.get_logger().info(f"{mode}")
+
+        # if source != self.last_source:
+        #     if source == "joystick":
+        #         self.get_logger().info("[MUX] Using joystick command (priority).")
+        #     elif source == "udp":
+        #         self.get_logger().info("[MUX] Using UDP command.")
+        #     else:
+        #         self.get_logger().warn("[MUX] No fresh command → stop (0,0).")
+        #     self.last_source = source
 
 
 def build_argparser() -> argparse.ArgumentParser:

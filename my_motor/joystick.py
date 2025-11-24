@@ -24,6 +24,10 @@ class JoystickReader:
         self.steer_raw = 0       # ABS_X
         self.throttle_raw = 0    # ABS_RY
 
+        self.estop = False
+        self.ad_mode = False
+        self.manual_mode = True
+
         self.DEADZONE = 3000
 
         print(f"[JOYSTICK] Opened {device_path}")
@@ -38,6 +42,7 @@ class JoystickReader:
 
     def _loop(self):
         for event in self.dev.read_loop():
+            print(event.type, ecodes.EV_KEY)
             if event.type == ecodes.EV_ABS:
 
                 # 왼쪽 스틱 X = steering
@@ -49,6 +54,29 @@ class JoystickReader:
                     # 위(-32767) → 전진(+)
                     self.throttle_raw = -self.normalize(event.value)
 
+            elif event.type == ecodes.EV_KEY:
+                if event.code == ecodes.BTN_TR:
+                    print("!!!!!!!!!!!!!!11  dmgkgk")
+
+                    if event.value == 1:
+                        self.estop = True
+                        self.manual_mode = False
+                        self.ad_mode = False
+
+                if event.code == ecodes.BTN_TL:
+                    if event.value == 1:
+                        self.estop = False
+                        self.manual_mode = True
+                        self.ad_mode = False
+
+                if event.code == ecodes.BTN_WEST:
+                    print("@@@@@@@@@@@@@@  dmgkgk")
+                    if event.value == 1:
+                        self.estop = False
+                        self.manual_mode = False
+                        self.ad_mode = True
+
+                print(f'code : {event.code} value : {event.value} estop : {self.estop}')
 
 # ============================================================
 # 기존 UDP 수신부 기반 → 조이스틱 입력으로 수정
@@ -70,19 +98,28 @@ class JoystickAckermann(Node):
         )
 
     def publish_latest(self):
-        # 조이스틱 값 (-1.0 ~ +1.0)
-        steer = self.joystick.steer_raw
-        throttle = self.joystick.throttle_raw
-
-        # int32 포맷처럼 스케일 변환
-        angle_i = int(steer * 3000)
-        speed_i = int(throttle * 1000)
-
-        # 기존 convert 함수 적용
-        angle_out, speed_out, _ = self._convert(angle_i, speed_i)
-
         msg = Float32MultiArray()
-        msg.data = [float(angle_out), float(speed_out)]
+        msg.data = [0., 0., 2.] # estop
+        if self.joystick.ad_mode:
+            print("Heloo??@@@@")
+            msg.data[2] = 0.
+
+        if self.joystick.manual_mode:
+            # 조이스틱 값 (-1.0 ~ +1.0)
+            steer = self.joystick.steer_raw
+            throttle = self.joystick.throttle_raw
+
+            # int32 포맷처럼 스케일 변환
+            angle_i = int(steer * 3000)
+            speed_i = int(throttle * 1000)
+
+            # 기존 convert 함수 적용
+            angle_out, speed_out, _ = self._convert(angle_i, speed_i)
+
+            msg.data[0] = float(angle_out)
+            msg.data[1] = float(speed_out)
+            msg.data[2] = 1.
+
         self.pub.publish(msg)
 
     def _convert(self, angle_i: int, speed_i: int):
@@ -113,7 +150,7 @@ def build_argparser():
     p.add_argument("--speed-scale", type=float, default=0.08)
     p.add_argument("--angle-unit", choices=["deg", "rad"], default="rad")
     p.add_argument("--angle-limit", type=float, default=50.0)
-    p.add_argument("--speed-limit", type=float, default=8.0)
+    p.add_argument("--speed-limit", type=float, default=2.0)
     p.add_argument("--topic", default="/JOYSTICK_CMD")
     return p
 
